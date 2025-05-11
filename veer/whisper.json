@@ -1,0 +1,30 @@
+{
+    "xlen" : 32,
+    "enable_zfh" : "true",
+    "enable_zba" : "true",
+    "enable_zbb" : "true",
+    "enable_zbs" : "true",
+    "abi_names" : "true",
+    
+    "csr" : {
+        "misa" : {
+            "reset-comment" : "imabfcv",
+            "reset" : "0x40201126",
+            "mask-comment" : "Misa is not writable by CSR instructions",
+            "mask" : "0x0"
+        },
+        "mstatus" : {
+            "mstatus-comment" : "Hardwired to zero except for FS, VS, and SD.",
+            "reset" : "0x80006600",
+            "mask" : "0x0",
+            "poke_mask" : "0x0"
+        }
+    },
+    
+    "vector" : {
+    "bytes_per_vec" : 32,
+    "max_bytes_per_elem" : 8
+    }
+    
+
+}
