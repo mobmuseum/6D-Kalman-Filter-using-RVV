@@ -126,8 +126,11 @@ initialize_Q:
     fdiv.s fs6, fs6, fs7    # q * DELTA_T^3 / 2
     
     # Calculate q * DELTA_T^2 / 2
-    fmul.s fs7, fs0, fs2
-    fdiv.s fs7, fs7, fs7    # q * DELTA_T^2 / 2
+    fmul.s fs7, fs0, fs2    # q * DELTA_T^2
+    li a0, 2
+    fcvt.s.w fs8, a0
+    fdiv.s fs7, fs7, fs8    # q * DELTA_T^2 / 2
+
     
     # Calculate q * DELTA_T^2
     fmul.s fs3, fs0, fs2    # q * DELTA_T^2
