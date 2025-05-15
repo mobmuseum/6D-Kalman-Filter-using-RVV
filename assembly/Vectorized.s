@@ -10,16 +10,19 @@ _start:
 #-------------------------------------------------------------------------
 main:
     # Setup the stack frame
-    addi sp, sp, -16
-    sw ra, 8(sp)
+    addi sp, sp, -8
+    sw ra, 4(sp)
     sw s0, 0(sp)
     
     # Initialize the process noise covariance matrix Q
     jal ra, initialize_Q
     
     # Run Kalman filter for all measurements
-    la s0, measurements
-    addi s1, zero, 0            # Measurement counter
+    la s0, measurements     # s0 will hold the measurement pointer for kalman_loop
+    addi s1, zero, 0        # s1 is the measurement counter for kalman_loop
+
+    # Explicitly call kalman_loop
+    jal ra, kalman_loop
 
 
 #-------------------------------------------------------------------------
@@ -27,8 +30,8 @@ main:
 # Initializes the process noise covariance matrix Q
 #-------------------------------------------------------------------------
 initialize_Q:
-    addi sp, sp, -16
-    sw ra, 8(sp)
+    addi sp, sp, -8
+    sw ra, 4(sp)
     sw s0, 0(sp)
     
     # Calculate SIGMA_A^2
@@ -76,29 +79,29 @@ initialize_Q:
     
     # X-components
     fsw fs5, 0(a0)          # Q[0][0] = q * DELTA_T^4 / 4
-    fsw fs6, 8(a0)          # Q[0][1] = q * DELTA_T^3 / 2
-    fsw fs7, 16(a0)         # Q[0][2] = q * DELTA_T^2 / 2
-    fsw fs6, 48(a0)         # Q[1][0] = q * DELTA_T^3 / 2
-    fsw fs3, 56(a0)         # Q[1][1] = q * DELTA_T^2
-    fsw fs4, 64(a0)         # Q[1][2] = q * DELTA_T
-    fsw fs7, 96(a0)         # Q[2][0] = q * DELTA_T^2 / 2
-    fsw fs4, 104(a0)        # Q[2][1] = q * DELTA_T
-    fsw fs0, 112(a0)        # Q[2][2] = q
+    fsw fs6, 4(a0)          # Q[0][1] = q * DELTA_T^3 / 2
+    fsw fs7, 8(a0)         # Q[0][2] = q * DELTA_T^2 / 2
+    fsw fs6, 12(a0)         # Q[1][0] = q * DELTA_T^3 / 2
+    fsw fs3, 16(a0)         # Q[1][1] = q * DELTA_T^2
+    fsw fs4, 20(a0)         # Q[1][2] = q * DELTA_T
+    fsw fs7, 24(a0)         # Q[2][0] = q * DELTA_T^2 / 2
+    fsw fs4, 28(a0)        # Q[2][1] = q * DELTA_T
+    fsw fs0, 32(a0)        # Q[2][2] = q
     
     # Y-components (same structure as X)
-    fsw fs5, 168(a0)        # Q[3][3] = q * DELTA_T^4 / 4
-    fsw fs6, 176(a0)        # Q[3][4] = q * DELTA_T^3 / 2
-    fsw fs7, 184(a0)        # Q[3][5] = q * DELTA_T^2 / 2
-    fsw fs6, 216(a0)        # Q[4][3] = q * DELTA_T^3 / 2
-    fsw fs3, 224(a0)        # Q[4][4] = q * DELTA_T^2
-    fsw fs4, 232(a0)        # Q[4][5] = q * DELTA_T
-    fsw fs7, 264(a0)        # Q[5][3] = q * DELTA_T^2 / 2
-    fsw fs4, 272(a0)        # Q[5][4] = q * DELTA_T
-    fsw fs0, 280(a0)        # Q[5][5] = q
+    fsw fs5, 84(a0)        # Q[3][3] = q * DELTA_T^4 / 4
+    fsw fs6, 88(a0)        # Q[3][4] = q * DELTA_T^3 / 2
+    fsw fs7, 92(a0)        # Q[3][5] = q * DELTA_T^2 / 2
+    fsw fs6, 108(a0)        # Q[4][3] = q * DELTA_T^3 / 2
+    fsw fs3, 112(a0)        # Q[4][4] = q * DELTA_T^2
+    fsw fs4, 116(a0)        # Q[4][5] = q * DELTA_T
+    fsw fs7, 132(a0)        # Q[5][3] = q * DELTA_T^2 / 2
+    fsw fs4, 136(a0)        # Q[5][4] = q * DELTA_T
+    fsw fs0, 140(a0)        # Q[5][5] = q
     
-    lw ra, 8(sp)
+    lw ra, 4(sp)
     lw s0, 0(sp)
-    addi sp, sp, 16
+    addi sp, sp, 8
     ret
 
 #-------------------------------------------------------------------------
@@ -107,8 +110,8 @@ initialize_Q:
 # a0: Matrix address
 #-------------------------------------------------------------------------
 enforce_symmetry:
-    addi sp, sp, -16
-    sw ra, 8(sp)
+    addi sp, sp, -8
+    sw ra, 4(sp)
     sw s0, 0(sp)
     
     mv s0, a0      # Save matrix address
@@ -128,14 +131,14 @@ j_loop:
     li t2, 6       # Matrix width
     mul t3, t0, t2 # i * width
     add t3, t3, t1 # i * width + j
-    slli t3, t3, 3 # (i * width + j) * 8 (size of double)
-    add t3, s0, t3 # matrix + (i * width + j) * 8
+    slli t3, t3, 2 # (i * width + j) * 4
+    add t3, s0, t3 # matrix + (i * width + j) * 4
     
     # Calculate address for matrix[j][i]
     mul t4, t1, t2 # j * width
     add t4, t4, t0 # j * width + i
-    slli t4, t4, 3 # (j * width + i) * 8
-    add t4, s0, t4 # matrix + (j * width + i) * 8
+    slli t4, t4, 2 # (j * width + i) * 4
+    add t4, s0, t4 # matrix + (j * width + i) * 4
     
     # Load values
     flw fs0, 0(t3) # matrix[i][j]
@@ -159,9 +162,9 @@ j_loop_end:
     li t2, 6
     blt t0, t2, i_loop
     
-    lw ra, 8(sp)
+    lw ra, 4(sp)
     lw s0, 0(sp)
-    addi sp, sp, 16
+    addi sp, sp, 8
     ret
 
 #-------------------------------------------------------------------------
@@ -172,10 +175,10 @@ j_loop_end:
 # a2: Address of result matrix C
 #-------------------------------------------------------------------------
 multiply_6x6_6x6:
-    addi sp, sp, -32
-    sw ra, 24(sp)
-    sw s0, 16(sp)
-    sw s1, 8(sp)
+    addi sp, sp, -16
+    sw ra, 12(sp)
+    sw s0, 8(sp)
+    sw s1, 4(sp)
     sw s2, 0(sp)
     
     mv s0, a0      # Address of A
@@ -197,8 +200,8 @@ j_loop_mul:
     li t2, 6       # Matrix width
     mul t3, t0, t2 # i * width
     add t3, t3, t1 # i * width + j
-    slli t3, t3, 3 # (i * width + j) * 8 (size of double)
-    add t3, s2, t3 # C + (i * width + j) * 8
+    slli t3, t3, 2 # (i * width + j) * 4
+    add t3, s2, t3 # C + (i * width + j) * 4
     
     # For each k, sum += A[i][k] * B[k][j]
     li t4, 0       # k = 0
@@ -207,14 +210,14 @@ k_loop_mul:
     # Calculate address for A[i][k]
     mul t5, t0, t2 # i * width
     add t5, t5, t4 # i * width + k
-    slli t5, t5, 3 # (i * width + k) * 8
-    add t5, s0, t5 # A + (i * width + k) * 8
+    slli t5, t5, 2 # (i * width + k) * 4
+    add t5, s0, t5 # A + (i * width + k) * 4
     
     # Calculate address for B[k][j]
     mul t6, t4, t2 # k * width
     add t6, t6, t1 # k * width + j
-    slli t6, t6, 3 # (k * width + j) * 8
-    add t6, s1, t6 # B + (k * width + j) * 8
+    slli t6, t6, 2 # (k * width + j) * 4
+    add t6, s1, t6 # B + (k * width + j) * 4
     
     # Load values
     flw fs1, 0(t5) # A[i][k]
@@ -238,11 +241,11 @@ k_loop_mul:
     addi s5, zero, 6
     blt t0, s5, i_loop_mul
     
-    lw ra, 24(sp)
-    lw s0, 16(sp)
-    lw s1, 8(sp)
+    lw ra, 12(sp)
+    lw s0, 8(sp)
+    lw s1, 4(sp)
     lw s2, 0(sp)
-    addi sp, sp, 32
+    addi sp, sp, 16
     ret
 
 #-------------------------------------------------------------------------
@@ -253,10 +256,10 @@ k_loop_mul:
 # a2: Address of result matrix C (6x2)
 #-------------------------------------------------------------------------
 multiply_6x6_6x2:
-    addi sp, sp, -32
-    sw ra, 24(sp)
-    sw s0, 16(sp)
-    sw s1, 8(sp)
+    addi sp, sp, -16
+    sw ra, 12(sp)
+    sw s0, 8(sp)
+    sw s1, 4(sp)
     sw s2, 0(sp)
     
     mv s0, a0      # Address of A
@@ -277,8 +280,8 @@ j_loop_mul_6x6_6x2:
     addi t2, zero, 2       # B matrix width
     mul t3, t0, t2 # i * width
     add t3, t3, t1 # i * width + j
-    slli t3, t3, 3 # (i * width + j) * 8 (size of double)
-    add t3, s2, t3 # C + (i * width + j) * 8
+    slli t3, t3, 2 # (i * width + j) * 4
+    add t3, s2, t3 # C + (i * width + j) * 4
     
     # For each k, sum += A[i][k] * B[k][j]
     addi t4, zero, 0       # k = 0
@@ -288,14 +291,14 @@ k_loop_mul_6x6_6x2:
     addi t5, zero, 6       # A matrix width
     mul t6, t0, t5 # i * A_width
     add t6, t6, t4 # i * A_width + k
-    slli t6, t6, 3 # (i * A_width + k) * 8
-    add t6, s0, t6 # A + (i * A_width + k) * 8
+    slli t6, t6, 2 # (i * A_width + k) * 4
+    add t6, s0, t6 # A + (i * A_width + k) * 4
     
     # Calculate address for B[k][j]
     mul s5, t4, t2 # k * B_width
     add s5, s5, t1 # k * B_width + j
-    slli s5, s5, 3 # (k * B_width + j) * 8
-    add s5, s1, s5 # B + (k * B_width + j) * 8
+    slli s5, s5, 2 # (k * B_width + j) * 4
+    add s5, s1, s5 # B + (k * B_width + j) * 4
     
     # Load values
     flw fs1, 0(t6) # A[i][k]
@@ -319,11 +322,11 @@ k_loop_mul_6x6_6x2:
     addi s6, zero, 6
     blt t0, s6, i_loop_mul_6x6_6x2
     
-    lw ra, 24(sp)
-    lw s0, 16(sp)
-    lw s1, 8(sp)
+    lw ra, 12(sp)
+    lw s0, 8(sp)
+    lw s1, 4(sp)
     lw s2, 0(sp)
-    addi sp, sp, 32
+    addi sp, sp, 16
     ret
 
 #-------------------------------------------------------------------------
@@ -333,10 +336,10 @@ k_loop_mul_6x6_6x2:
 # a1: Address of result matrix B
 #-------------------------------------------------------------------------
 transpose_6x6:
-    addi sp, sp, -32
-    sw ra, 24(sp)
-    sw s0, 16(sp)
-    sw s1, 8(sp)
+    addi sp, sp, -16
+    sw ra, 12(sp)
+    sw s0, 8(sp)
+    sw s1, 4(sp)
     
     mv s0, a0      # Address of A
     mv s1, a1      # Address of B
@@ -352,14 +355,14 @@ j_loop_trans:
     addi t2, zero, 6       # Matrix width
     mul t3, t0, t2 # i * width
     add t3, t3, t1 # i * width + j
-    slli t3, t3, 3 # (i * width + j) * 8 (size of double)
-    add t3, s0, t3 # A + (i * width + j) * 8
+    slli t3, t3, 2 # (i * width + j) * 4
+    add t3, s0, t3 # A + (i * width + j) * 4
     
     # Calculate address for B[j][i]
     mul t4, t1, t2 # j * width
     add t4, t4, t0 # j * width + i
-    slli t4, t4, 3 # (j * width + i) * 8
-    add t4, s1, t4 # B + (j * width + i) * 8
+    slli t4, t4, 2 # (j * width + i) * 4
+    add t4, s1, t4 # B + (j * width + i) * 4
     
     # Load from A[i][j] and store to B[j][i]
     flw fs0, 0(t3)
@@ -373,10 +376,10 @@ j_loop_trans:
     addi t5, zero, 6
     blt t0, t5, i_loop_trans
     
-    lw ra, 24(sp)
-    lw s0, 16(sp)
-    lw s1, 8(sp)
-    addi sp, sp, 32
+    lw ra, 12(sp)
+    lw s0, 8(sp)
+    lw s1, 4(sp)
+    addi sp, sp, 16
     ret
 
 #-------------------------------------------------------------------------
@@ -386,10 +389,10 @@ j_loop_trans:
 # a1: Address of result matrix B (6x2)
 #-------------------------------------------------------------------------
 transpose_2x6_to_6x2:
-    addi sp, sp, -32
-    sw ra, 24(sp)
-    sw s0, 16(sp)
-    sw s1, 8(sp)
+    addi sp, sp, -16
+    sw ra, 12(sp)
+    sw s0, 8(sp)
+    sw s1, 4(sp)
     
     mv s0, a0      # Address of A
     mv s1, a1      # Address of B
@@ -405,15 +408,15 @@ j_loop_trans_2x6:
     addi t2, zero, 6       # A matrix width
     mul t3, t0, t2 # i * A_width
     add t3, t3, t1 # i * A_width + j
-    slli t3, t3, 3 # (i * A_width + j) * 8 (size of double)
-    add t3, s0, t3 # A + (i * A_width + j) * 8
+    slli t3, t3, 2 # (i * A_width + j) * 4
+    add t3, s0, t3 # A + (i * A_width + j) * 4
     
     # Calculate address for B[j][i]
     addi t4, zero, 2       # B matrix width
     mul t5, t1, t4 # j * B_width
     add t5, t5, t0 # j * B_width + i
-    slli t5, t5, 3 # (j * B_width + i) * 8
-    add t5, s1, t5 # B + (j * B_width + i) * 8
+    slli t5, t5, 2 # (j * B_width + i) * 4
+    add t5, s1, t5 # B + (j * B_width + i) * 4
     
     # Load from A[i][j] and store to B[j][i]
     flw fs0, 0(t3)
@@ -427,10 +430,10 @@ j_loop_trans_2x6:
     addi t6, zero, 2
     blt t0, t6, i_loop_trans_2x6
     
-    lw ra, 24(sp)
-    lw s0, 16(sp)
-    lw s1, 8(sp)
-    addi sp, sp, 32
+    lw ra, 12(sp)
+    lw s0, 8(sp)
+    lw s1, 4(sp)
+    addi sp, sp, 16
     ret
 
 #-------------------------------------------------------------------------
@@ -440,19 +443,19 @@ j_loop_trans_2x6:
 # a1: Address of result matrix A_inv (2x2)
 #-------------------------------------------------------------------------
 invert_2x2:
-    addi sp, sp, -32
-    sw ra, 24(sp)
-    sw s0, 16(sp)
-    sw s1, 8(sp)
+    addi sp, sp, -16
+    sw ra, 12(sp)
+    sw s0, 8(sp)
+    sw s1, 4(sp)
     
     mv s0, a0      # Address of A
     mv s1, a1      # Address of A_inv
     
     # Load the elements of matrix A
     flw fs0, 0(s0)     # A[0][0]
-    flw fs1, 8(s0)     # A[0][1]
-    flw fs2, 16(s0)    # A[1][0]
-    flw fs3, 24(s0)    # A[1][1]
+    flw fs1, 4(s0)     # A[0][1]
+    flw fs2, 8(s0)    # A[1][0]
+    flw fs3, 12(s0)    # A[1][1]
     
     # Calculate determinant: det = A[0][0]*A[1][1] - A[0][1]*A[1][0]
     fmul.s fs4, fs0, fs3
@@ -460,10 +463,10 @@ invert_2x2:
     fsub.s fs6, fs4, fs5    # fs6 = det
     
     # Handle singularity: if(fsbs(det) < 1e-7)
-    fabs.s fs7, fs6
-    li t0, 0x3EB0C6F7A0B5ED8D    # 1e-7 in double format
-    fcvt.s.w fs5, t0          # Convert the integer t0 to double-precision and store in fs5
-    flt.s a0, fs7, fs5
+    fabs.s fs7, fs6        # fs6 is the determinant
+    la s8, epsilon_val
+    flw fs5, 0(s8)         # fs5 = 1.0e-7 (single-precision)
+    flt.s a0, fs7, fs5     # if |det| < 1e-7
     beqz a0, invert_2x2_proceed
     
     # Set det to sign(det) * max(|det|, 1e-7)
@@ -487,22 +490,22 @@ invert_2x2_proceed:
     # A_inv[0][1] = -A[0][1]/det
     fneg.s fs1, fs1
     fdiv.s fs1, fs1, fs6
-    fsw fs1, 8(s1)
+    fsw fs1, 4(s1)
     
     # A_inv[1][0] = -A[1][0]/det
     fneg.s fs2, fs2
     fdiv.s fs2, fs2, fs6
-    fsw fs2, 16(s1)
+    fsw fs2, 8(s1)
     
     # A_inv[1][1] = A[0][0]/det
     flw fs3, 0(s0)     # Reload A[0][0]
     fdiv.s fs3, fs3, fs6
-    fsw fs3, 24(s1)
+    fsw fs3, 12(s1)
     
-    lw ra, 24(sp)
-    lw s0, 16(sp)
-    lw s1, 8(sp)
-    addi sp, sp, 32
+    lw ra, 12(sp)
+    lw s0, 8(sp)
+    lw s1, 4(sp)
+    addi sp, sp, 16
     ret
 
 #-------------------------------------------------------------------------
@@ -513,10 +516,10 @@ invert_2x2_proceed:
 # a2: Address of result matrix C (6x6)
 #-------------------------------------------------------------------------
 matrix_subtract_6x6:
-    addi sp, sp, -32
-    sw ra, 24(sp)
-    sw s0, 16(sp)
-    sw s1, 8(sp)
+    addi sp, sp, -16
+    sw ra, 12(sp)
+    sw s0, 8(sp)
+    sw s1, 4(sp)
     sw s2, 0(sp)
     
     mv s0, a0      # Address of A
@@ -534,11 +537,11 @@ j_loop_sub:
     addi t2, zero, 6       # Matrix width
     mul t3, t0, t2 # i * width
     add t3, t3, t1 # i * width + j
-    slli t3, t3, 3 # (i * width + j) * 8 (size of double)
+    slli t3, t3, 2 # (i * width + j) * 4
     
-    add t4, s0, t3 # A + (i * width + j) * 8
-    add t5, s1, t3 # B + (i * width + j) * 8
-    add t6, s2, t3 # C + (i * width + j) * 8
+    add t4, s0, t3 # A + (i * width + j) * 4
+    add t5, s1, t3 # B + (i * width + j) * 4
+    add t6, s2, t3 # C + (i * width + j) * 4
     
     # Load values
     flw fs0, 0(t4)
@@ -558,11 +561,11 @@ j_loop_sub:
     addi s5, zero, 6
     blt t0, s5, i_loop_sub
     
-    lw ra, 24(sp)
-    lw s0, 16(sp)
-    lw s1, 8(sp)
+    lw ra, 12(sp)
+    lw s0, 8(sp)
+    lw s1, 4(sp)
     lw s2, 0(sp)
-    addi sp, sp, 32
+    addi sp, sp, 16
     ret
 
 #-------------------------------------------------------------------------
@@ -573,10 +576,10 @@ j_loop_sub:
 # a2: Address of result matrix C (6x6)
 #-------------------------------------------------------------------------
 matrix_add_6x6:
-    addi sp, sp, -32
-    sw ra, 24(sp)
-    sw s0, 16(sp)
-    sw s1, 8(sp)
+    addi sp, sp, -16
+    sw ra, 12(sp)
+    sw s0, 8(sp)
+    sw s1, 4(sp)
     sw s2, 0(sp)
     
     mv s0, a0      # Address of A
@@ -594,11 +597,11 @@ j_loop_add:
     addi t2, zero, 6       # Matrix width
     mul t3, t0, t2 # i * width
     add t3, t3, t1 # i * width + j
-    slli t3, t3, 3 # (i * width + j) * 8 (size of double)
+    slli t3, t3, 2 # (i * width + j) * 4 (size of .float)
     
-    add t4, s0, t3 # A + (i * width + j) * 8
-    add t5, s1, t3 # B + (i * width + j) * 8
-    add t6, s2, t3 # C + (i * width + j) * 8
+    add t4, s0, t3 # A + (i * width + j) * 4
+    add t5, s1, t3 # B + (i * width + j) * 4
+    add t6, s2, t3 # C + (i * width + j) * 4
     
     # Load values
     flw fs0, 0(t4)
@@ -618,11 +621,11 @@ j_loop_add:
     addi s5, zero, 6
     blt t0, s5, i_loop_add
     
-    lw ra, 24(sp)
-    lw s0, 16(sp)
-    lw s1, 8(sp)
+    lw ra, 12(sp)
+    lw s0, 8(sp)
+    lw s1, 4(sp)
     lw s2, 0(sp)
-    addi sp, sp, 32
+    addi sp, sp, 16
     ret
 
 #-------------------------------------------------------------------------
@@ -633,10 +636,10 @@ j_loop_add:
 # a2: Address of result matrix C (6x6)
 #-------------------------------------------------------------------------
 multiply_6x2_2x6:
-    addi sp, sp, -32
-    sw ra, 24(sp)
-    sw s0, 16(sp)
-    sw s1, 8(sp)
+    addi sp, sp, -16
+    sw ra, 12(sp)
+    sw s0, 8(sp)
+    sw s1, 4(sp)
     sw s2, 0(sp)
     
     mv s0, a0      # Address of A
@@ -657,8 +660,8 @@ j_loop_mul_6x2_2x6:
     addi t2, zero, 6       # C matrix width
     mul t3, t0, t2 # i * C_width
     add t3, t3, t1 # i * C_width + j
-    slli t3, t3, 3 # (i * C_width + j) * 8 (size of double)
-    add t3, s2, t3 # C + (i * C_width + j) * 8
+    slli t3, t3, 2 # (i * C_width + j) * 4 (size of .float)
+    add t3, s2, t3 # C + (i * C_width + j) * 4
     
     # For each k, sum += A[i][k] * B[k][j]
     addi t4, zero, 0       # k = 0
@@ -668,15 +671,15 @@ k_loop_mul_6x2_2x6:
     addi t5, zero, 2       # A matrix width
     mul t6, t0, t5 # i * A_width
     add t6, t6, t4 # i * A_width + k
-    slli t6, t6, 3 # (i * A_width + k) * 8
-    add t6, s0, t6 # A + (i * A_width + k) * 8
+    slli t6, t6, 2 # (i * A_width + k) * 4
+    add t6, s0, t6 # A + (i * A_width + k) * 4
     
     # Calculate address for B[k][j]
     addi s5, zero, 6       # B matrix width
     mul s6, t4, s5 # k * B_width
     add s6, s6, t1 # k * B_width + j
-    slli s6, s6, 3 # (k * B_width + j) * 8
-    add s6, s1, s6 # B + (k * B_width + j) * 8
+    slli s6, s6, 2 # (k * B_width + j) * 4
+    add s6, s1, s6 # B + (k * B_width + j) * 4
     
     # Load values
     flw fs1, 0(t6) # A[i][k]
@@ -700,11 +703,11 @@ k_loop_mul_6x2_2x6:
     addi s7, zero, 6
     blt t0, s7, i_loop_mul_6x2_2x6
     
-    lw ra, 24(sp)
-    lw s0, 16(sp)
-    lw s1, 8(sp)
+    lw ra, 12(sp)
+    lw s0, 8(sp)
+    lw s1, 4(sp)
     lw s2, 0(sp)
-    addi sp, sp, 32
+    addi sp, sp, 16
     ret
 
 #-------------------------------------------------------------------------
@@ -713,8 +716,8 @@ k_loop_mul_6x2_2x6:
 # a0: Address of matrix to initialize
 #-------------------------------------------------------------------------
 init_identity_matrix:
-    addi sp, sp, -16
-    sw ra, 8(sp)
+    addi sp, sp, -8
+    sw ra, 4(sp)
     sw s0, 0(sp)
     
     mv s0, a0      # Matrix address
@@ -730,8 +733,8 @@ zero_inner_loop:
     addi t2, zero, 6       # Matrix width
     mul t3, t0, t2 # i * width
     add t3, t3, t1 # i * width + j
-    slli t3, t3, 3 # (i * width + j) * 8 (size of double)
-    add t3, s0, t3 # matrix + (i * width + j) * 8
+    slli t3, t3, 2 # (i * width + j) * 4 (size of .float)
+    add t3, s0, t3 # matrix + (i * width + j) * 4
     
     # Store 0.0
     fcvt.s.w fs0, zero
@@ -753,8 +756,8 @@ diag_loop:
     addi t1, zero, 6       # Matrix width
     mul t2, t0, t1 # i * width
     add t2, t2, t0 # i * width + i
-    slli t2, t2, 3 # (i * width + i) * 8 (size of double)
-    add t2, s0, t2 # matrix + (i * width + i) * 8
+    slli t2, t2, 2 # (i * width + i) * 4 (size of .float)
+    add t2, s0, t2 # matrix + (i * width + i) * 4
     
     # Store 1.0
     addi t3, zero, 1
@@ -765,9 +768,9 @@ diag_loop:
     addi t4, zero, 6
     blt t0, t4, diag_loop
     
-    lw ra, 8(sp)
+    lw ra, 4(sp)
     lw s0, 0(sp)
-    addi sp, sp, 16
+    addi sp, sp, 8
     ret
 
 #-------------------------------------------------------------------------
@@ -776,12 +779,12 @@ diag_loop:
 # a0: Address of measurement z (2 elements)
 #-------------------------------------------------------------------------
 kalman_filter_update:
-    addi sp, sp, -48
-    sw ra, 40(sp)
-    sw s0, 32(sp)
-    sw s1, 24(sp)
-    sw s2, 16(sp)
-    sw s3, 8(sp)
+    addi sp, sp, -24
+    sw ra, 20(sp)
+    sw s0, 16(sp)
+    sw s1, 12(sp)
+    sw s2, 8(sp)
+    sw s3, 4(sp)
     sw s4, 0(sp)
     
     mv s0, a0      # Address of measurement z
@@ -807,12 +810,12 @@ x_pred_inner_loop:
     addi t2, zero, 6       # Matrix width
     mul t3, t0, t2 # i * width
     add t3, t3, t1 # i * width + j
-    slli t3, t3, 3 # (i * width + j) * 8 (size of double)
-    add t3, a0, t3 # F + (i * width + j) * 8
+    slli t3, t3, 2 # (i * width + j) * 4 (size of .float)
+    add t3, a0, t3 # F + (i * width + j) * 4
     
     # Calculate address for x[j]
-    slli t4, t1, 3 # j * 8 (size of double)
-    add t4, a1, t4 # x + j * 8
+    slli t4, t1, 2 # j * 4 (size of .float)
+    add t4, a1, t4 # x + j * 4
     
     # Load values
     flw fs1, 0(t3) # F[i][j]
@@ -826,8 +829,8 @@ x_pred_inner_loop:
     blt t1, t5, x_pred_inner_loop
     
     # Store result to x_pred[i]
-    slli t5, t0, 3 # i * 8 (size of double)
-    add t5, a2, t5 # x_pred + i * 8
+    slli t5, t0, 2 # i * 4 (size of .float)
+    add t5, a2, t5 # x_pred + i * 4
     fsw fs0, 0(t5)
     
     addi t0, t0, 1 # i++
@@ -897,11 +900,11 @@ x_pred_inner_loop:
     flw fs0, 0(t0)      # R[0][0]
     addi t4, zero, 0            # j = 0
 S_00_loop:
-    slli t5, t4, 3      # j * 8
-    add t5, t2, t5      # PHT + j*8 = &PHT[j][0]
+    slli t5, t4, 2      # j * 4
+    add t5, t2, t5      # PHT + j*4 = &PHT[j][0]
     flw fs1, 0(t5)      # PHT[j][0]
-    slli t6, t4, 3      # j * 8
-    add t6, t1, t6      # H + j*8 = &H[0][j] 
+    slli t6, t4, 2      # j * 4
+    add t6, t1, t6      # H + j*4 = &H[0][j] 
     flw fs2, 0(t6)      # H[0][j]
     fmadd.s fs0, fs1, fs2, fs0
     addi t4, t4, 1
@@ -910,52 +913,52 @@ S_00_loop:
     fsw fs0, 0(t3)      # S[0][0]
     
     # S[0][1]
-    flw fs0, 8(t0)      # R[0][1]
+    flw fs0, 4(t0)      # R[0][1]
     addi t4, zero, 0            # j = 0
 S_01_loop:
-    slli t5, t4, 3      # j * 8
-    add t5, t2, t5      # PHT + j*8
-    flw fs1, 8(t5)      # PHT[j][1]
-    slli t6, t4, 3      # j * 8
-    add t6, t1, t6      # H + j*8
+    slli t5, t4, 2      # j * 4
+    add t5, t2, t5      # PHT + j*4
+    flw fs1, 4(t5)      # PHT[j][1]
+    slli t6, t4, 2      # j * 4
+    add t6, t1, t6      # H + j*4
     flw fs2, 0(t6)      # H[0][j]
     fmadd.s fs0, fs1, fs2, fs0
     addi t4, t4, 1
     addi s5, zero, 6
     blt t4, s5, S_01_loop
-    fsw fs0, 8(t3)      # S[0][1]
+    fsw fs0, 4(t3)      # S[0][1]
     
     # S[1][0]
-    flw fs0, 16(t0)     # R[1][0]
+    flw fs0, 8(t0)     # R[1][0]
     addi t4, zero, 0            # j = 0
 S_10_loop:
-    slli t5, t4, 3      # j * 8
-    add t5, t2, t5      # PHT + j*8
+    slli t5, t4, 2      # j * 4
+    add t5, t2, t5      # PHT + j*4
     flw fs1, 0(t5)      # PHT[j][0]
-    slli t6, t4, 3      # j * 8
-    add t6, t1, t6      # H + j*8
-    flw fs2, 48(t6)     # H[1][j] (offset = 6*8 + j*8)
+    slli t6, t4, 2      # j * 4
+    add t6, t1, t6      # H + j*4
+    flw fs2, 24(t6)     # H[1][j] (offset = 6*8 + j*4)
     fmadd.s fs0, fs1, fs2, fs0
     addi t4, t4, 1
     addi s5, zero, 6
     blt t4, s5, S_10_loop
-    fsw fs0, 16(t3)     # S[1][0]
+    fsw fs0, 8(t3)     # S[1][0]
     
     # S[1][1]
-    flw fs0, 24(t0)     # R[1][1]
+    flw fs0, 12(t0)     # R[1][1]
     addi t4, zero, 0            # j = 0
 S_11_loop:
-    slli t5, t4, 3      # j * 8
-    add t5, t2, t5      # PHT + j*8
-    flw fs1, 8(t5)      # PHT[j][1]
-    slli t6, t4, 3      # j * 8
-    add t6, t1, t6      # H + j*8
-    flw fs2, 48(t6)     # H[1][j] (offset = 6*8 + j*8)
+    slli t5, t4, 2      # j * 4
+    add t5, t2, t5      # PHT + j*4
+    flw fs1, 4(t5)      # PHT[j][1]
+    slli t6, t4, 2      # j * 4
+    add t6, t1, t6      # H + j*4
+    flw fs2, 24(t6)     # H[1][j] (offset = 6*8 + j*4)
     fmadd.s fs0, fs1, fs2, fs0
     addi t4, t4, 1
     addi s5, zero, 6
     blt t4, s5, S_11_loop
-    fsw fs0, 24(t3)     # S[1][1]
+    fsw fs0, 12(t3)     # S[1][1]
     
     # 4. Calculate S_inv = S^-1
     la a0, S
@@ -982,14 +985,14 @@ K_sum_loop:
     addi t3, zero, 2       # PHT width
     mul t4, t0, t3 # i * width
     add t4, t4, t2 # i * width + k
-    slli t4, t4, 3 # (i * width + k) * 8
-    add t4, a0, t4 # PHT + (i * width + k) * 8
+    slli t4, t4, 2 # (i * width + k) * 4
+    add t4, a0, t4 # PHT + (i * width + k) * 4
     
     # Calculate address for S_inv[k][j]
     mul t5, t2, t3 # k * width
     add t5, t5, t1 # k * width + j
-    slli t5, t5, 3 # (k * width + j) * 8
-    add t5, a1, t5 # S_inv + (k * width + j) * 8
+    slli t5, t5, 2 # (k * width + j) * 4
+    add t5, a1, t5 # S_inv + (k * width + j) * 4
     
     # Load values
     flw fs1, 0(t4) # PHT[i][k]
@@ -1005,8 +1008,8 @@ K_sum_loop:
     # Store result to K[i][j]
     mul t6, t0, t3 # i * width
     add t6, t6, t1 # i * width + j
-    slli t6, t6, 3 # (i * width + j) * 8
-    add t6, a2, t6 # K + (i * width + j) * 8
+    slli t6, t6, 2 # (i * width + j) * 4
+    add t6, a2, t6 # K + (i * width + j) * 4
     fsw fs0, 0(t6)
     
     addi t1, t1, 1 # j++
@@ -1024,12 +1027,12 @@ K_sum_loop:
     
     # Load z[0] and z[1]
     flw fs0, 0(s0)     # z[0]
-    flw fs1, 8(s0)     # z[1]
+    flw fs1, 4(s0)     # z[1]
     
     # Load x_pred[0] and x_pred[3]
     la t0, x_pred
     flw fs2, 0(t0)     # x_pred[0]
-    flw fs3, 24(t0)    # x_pred[3]
+    flw fs3, 12(t0)    # x_pred[3]
     
     # Calculate y[0] = z[0] - x_pred[0] and y[1] = z[1] - x_pred[3]
     fsub.s fs4, fs0, fs2  # y[0]
@@ -1045,18 +1048,18 @@ x_update_loop:
     # Calculate K[i][0]*y[0] + K[i][1]*y[1]
     addi t4, zero, 2              # K width
     mul t5, t3, t4        # i * width
-    slli t5, t5, 3        # (i * width) * 8
-    add t5, t1, t5        # K + (i * width) * 8
+    slli t5, t5, 2        # (i * width) * 4
+    add t5, t1, t5        # K + (i * width) * 4
     
     flw fs6, 0(t5)        # K[i][0]
-    flw fs7, 8(t5)        # K[i][1]
+    flw fs7, 4(t5)        # K[i][1]
     
     fmul.s fs6, fs6, fs4  # K[i][0] * y[0]
     fmul.s fs7, fs7, fs5  # K[i][1] * y[1]
     
     # Load x_pred[i]
-    slli t6, t3, 3        # i * 8
-    add t6, t0, t6        # x_pred + i * 8
+    slli t6, t3, 2        # i * 4
+    add t6, t0, t6        # x_pred + i * 4
     flw fs0, 0(t6)        # x_pred[i]
     
     # Calculate x[i] = x_pred[i] + K[i][0]*y[0] + K[i][1]*y[1]
@@ -1064,8 +1067,8 @@ x_update_loop:
     fadd.s fs0, fs0, fs6  # x_pred[i] + (K[i][0]*y[0] + K[i][1]*y[1])
     
     # Store result in x[i]
-    slli t6, t3, 3        # i * 8
-    add t6, t2, t6        # x + i * 8
+    slli t6, t3, 2        # i * 4
+    add t6, t2, t6        # x + i * 4
     fsw fs0, 0(t6)        # x[i]
     
     addi t3, t3, 1        # i++
@@ -1099,13 +1102,13 @@ x_update_loop:
     la a0, P
     jal ra, enforce_symmetry
     
-    lw ra, 40(sp)
-    lw s0, 32(sp)
-    lw s1, 24(sp)
-    lw s2, 16(sp)
-    lw s3, 8(sp)
+    lw ra, 20(sp)
+    lw s0, 16(sp)
+    lw s1, 12(sp)
+    lw s2, 8(sp)
+    lw s3, 4(sp)
     lw s4, 0(sp)
-    addi sp, sp, 48
+    addi sp, sp, 24
     ret
     
 kalman_loop:
@@ -1114,53 +1117,17 @@ kalman_loop:
     jal ra, kalman_filter_update
     
     # Move to next measurement
-    addi s0, s0, 16     # Each measurement is 2 doubles = 16 bytes
+    addi s0, s0, 8     # Each measurement is 2 .floats = 8 bytes
     addi s1, s1, 1      # Increment counter
     addi t0, zero, 35
     blt s1, t0, kalman_loop
     
     # Exit
-    lw ra, 8(sp)
+    lw ra, 4(sp)
     lw s0, 0(sp)
-    addi sp, sp, 16
-    addi a0, zero, 0           # Return 0
-    ret
+    addi sp, sp, 8
+    j _finish
 ## END YOU CODE HERE
-
-# Function: print
-# Logs values from array in a0 into registers v1 for debugging and output.
-# Inputs:
-#   - a0: Base address of array
-#   - a1: Size of array i.e. number of elements to log
-# Clobbers: t0,t1, t2,t3 ft0, ft1.
-printToLogVectorized:        
-    addi sp, sp, -4
-    sw a0, 0(sp)
-
-    li t0, 0x123                 # Pattern for help in python script
-    li t0, 0x456                 # Pattern for help in python script
-    mv a1, a1                   # moving size to get it from log 
-    mul a1, a1, a1              # sqaure matrix has n^2 elements 
-	li t0, 0		                # load i = 0
-    printloop:
-        vsetvli t3, a1, e32           # Set VLEN based on a1
-        slli t4, t3, 2                # Compute VLEN * 4 for address increment
-
-        vle32.v v1, (a0)              # Load real[i] into v1
-        add a0, a0, t4                # Increment pointer for real[] by VLEN * 4
-        add t0, t0, t3                # Increment index
-
-        bge t0, a1, endPrintLoop      # Exit loop if i >= size
-        j printloop                   # Jump to start of loop
-    endPrintLoop:
-    li t0, 0x123                    # Pattern for help in python script
-    li t0, 0x456                    # Pattern for help in python script
-	
-    lw a0, 0(sp)
-    addi sp, sp, 4
-
-	jr ra
-
 
 
 # Function: _finish
@@ -1179,104 +1146,101 @@ _finish:
 .data
 ## ALL DATA IS DEFINED HERE LIKE MATRIX, CONSTANTS ETC
 
-# Strings for output
-.align 2
-str_initial:    .string "Initial State: [%.2f, %.2f]\n"
-str_estimate:   .string "Estimate %2d: X=%7.2f, Y=%7.2f, Vx=%6.2f, Vy=%6.2f\n"
+epsilon_val: .float 1.0e-7
 
 # Constants
 .align 3
-DELTA_T:        .double 1.0       # Time step (1 second)
-SIGMA_A:        .double 0.2       # Standard deviation for acceleration noise
-SIGMA_M:        .double 3.0       # Standard deviation for measurement noise
+DELTA_T:        .float 1.0       # Time step (1 second)
+SIGMA_A:        .float 0.2       # Standard deviation for acceleration noise
+SIGMA_M:        .float 3.0       # Standard deviation for measurement noise
 
 # State vector (6D: [x, vx, ax, y, vy, ay])
 .align 3
-x:              .double 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
+x:              .float 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
 
 # Covariance matrix (6x6)
 .align 3
-P:              .double 500.0, 0.0, 0.0, 0.0, 0.0, 0.0
-                .double 0.0, 500.0, 0.0, 0.0, 0.0, 0.0
-                .double 0.0, 0.0, 500.0, 0.0, 0.0, 0.0
-                .double 0.0, 0.0, 0.0, 500.0, 0.0, 0.0
-                .double 0.0, 0.0, 0.0, 0.0, 500.0, 0.0
-                .double 0.0, 0.0, 0.0, 0.0, 0.0, 500.0
+P:              .float 500.0, 0.0, 0.0, 0.0, 0.0, 0.0
+                .float 0.0, 500.0, 0.0, 0.0, 0.0, 0.0
+                .float 0.0, 0.0, 500.0, 0.0, 0.0, 0.0
+                .float 0.0, 0.0, 0.0, 500.0, 0.0, 0.0
+                .float 0.0, 0.0, 0.0, 0.0, 500.0, 0.0
+                .float 0.0, 0.0, 0.0, 0.0, 0.0, 500.0
 
 # State transition matrix (6x6)
 .align 3
-F:              .double 1.0, 1.0, 0.5, 0.0, 0.0, 0.0       # Using DELTA_T=1.0
-                .double 0.0, 1.0, 1.0, 0.0, 0.0, 0.0
-                .double 0.0, 0.0, 1.0, 0.0, 0.0, 0.0
-                .double 0.0, 0.0, 0.0, 1.0, 1.0, 0.5
-                .double 0.0, 0.0, 0.0, 0.0, 1.0, 1.0
-                .double 0.0, 0.0, 0.0, 0.0, 0.0, 1.0
+F:              .float 1.0, 1.0, 0.5, 0.0, 0.0, 0.0       # Using DELTA_T=1.0
+                .float 0.0, 1.0, 1.0, 0.0, 0.0, 0.0
+                .float 0.0, 0.0, 1.0, 0.0, 0.0, 0.0
+                .float 0.0, 0.0, 0.0, 1.0, 1.0, 0.5
+                .float 0.0, 0.0, 0.0, 0.0, 1.0, 1.0
+                .float 0.0, 0.0, 0.0, 0.0, 0.0, 1.0
 
 # Process noise covariance (6x6)
 .align 3
-Q:              .space 288        # 6x6 matrix, 8 bytes per double = 288 bytes
+Q:              .space 144        # 6x6 matrix, 4 bytes per .float = 144 bytes
 
 # Measurement matrix (2x6)
 .align 3
-H:              .double 1.0, 0.0, 0.0, 0.0, 0.0, 0.0
-                .double 0.0, 0.0, 0.0, 1.0, 0.0, 0.0
+H:              .float 1.0, 0.0, 0.0, 0.0, 0.0, 0.0
+                .float 0.0, 0.0, 0.0, 1.0, 0.0, 0.0
 
 # Measurement noise covariance (2x2)
 .align 3
-R:              .double 9.0, 0.0  # SIGMA_M^2 = 3.0^2 = 9.0
-                .double 0.0, 9.0
+R:              .float 9.0, 0.0  # SIGMA_M^2 = 3.0^2 = 9.0
+                .float 0.0, 9.0
 
 # Temporary matrices used in calculations
 .align 3
-F_T:            .space 288        # 6x6 matrix
-P_pred:         .space 288        # 6x6 matrix
-FP:             .space 288        # 6x6 matrix
-FPFT:           .space 288        # 6x6 matrix
-H_T:            .space 96         # 6x2 matrix
-PHT:            .space 96         # 6x2 matrix
-S:              .space 32         # 2x2 matrix
-S_inv:          .space 32         # 2x2 matrix
-K:              .space 96         # 6x2 matrix
-I:              .space 288        # 6x6 identity matrix
-KH:             .space 288        # 6x6 matrix
-I_KH:           .space 288        # 6x6 matrix
-x_pred:         .space 48         # 6-element vector
+F_T:            .space 144        # 6x6 matrix
+P_pred:         .space 144        # 6x6 matrix
+FP:             .space 144        # 6x6 matrix
+FPFT:           .space 144        # 6x6 matrix
+H_T:            .space 48         # 6x2 matrix
+PHT:            .space 48         # 6x2 matrix
+S:              .space 16         # 2x2 matrix
+S_inv:          .space 16         # 2x2 matrix
+K:              .space 48         # 6x2 matrix
+I:              .space 144        # 6x6 identity matrix
+KH:             .space 144        # 6x6 matrix
+I_KH:           .space 144        # 6x6 matrix
+x_pred:         .space 24         # 6-element vector
 
 # For measurements
 .align 3
-measurements:   .double 301.5, -401.46
-                .double 298.23, -375.44
-                .double 297.83, -346.15
-                .double 302.45, -318.22
-                .double 305.76, -292.78
-                .double 309.75, -265.35
-                .double 315.84, -241.79
-                .double 319.34, -214.69
-                .double 326.99, -189.3
-                .double 333.35, -162.54
-                .double 337.93, -138.52
-                .double 342.61, -111.92
-                .double 347.87, -86.49
-                .double 354.04, -59.87
-                .double 359.77, -34.62
-                .double 365.13, -9.18
-                .double 371.32, 17.95
-                .double 376.91, 41.44
-                .double 383.45, 67.89
-                .double 390.37, 92.39
-                .double 397.11, 117.95
-                .double 401.55, 145.27
-                .double 407.62, 167.23
-                .double 410.51, 194.33
-                .double 417.67, 218.61
-                .double 422.51, 242.91
-                .double 426.47, 271.52
-                .double 429.89, 295.57
-                .double 431.6, 322.47
-                .double 435.9, 350.73
-                .double 440.2, 374.52
-                .double 441.75, 401.7
-                .double 444.73, 428.39
-                .double 448.56, 451.5
-                .double 450.73, 476.4
+measurements:   .float 301.5, -401.46
+                .float 298.23, -375.44
+                .float 297.83, -346.15
+                .float 302.45, -318.22
+                .float 305.76, -292.78
+                .float 309.75, -265.35
+                .float 315.84, -241.79
+                .float 319.34, -214.69
+                .float 326.99, -189.3
+                .float 333.35, -162.54
+                .float 337.93, -138.52
+                .float 342.61, -111.92
+                .float 347.87, -86.49
+                .float 354.04, -59.87
+                .float 359.77, -34.62
+                .float 365.13, -9.18
+                .float 371.32, 17.95
+                .float 376.91, 41.44
+                .float 383.45, 67.89
+                .float 390.37, 92.39
+                .float 397.11, 117.95
+                .float 401.55, 145.27
+                .float 407.62, 167.23
+                .float 410.51, 194.33
+                .float 417.67, 218.61
+                .float 422.51, 242.91
+                .float 426.47, 271.52
+                .float 429.89, 295.57
+                .float 431.6, 322.47
+                .float 435.9, 350.73
+                .float 440.2, 374.52
+                .float 441.75, 401.7
+                .float 444.73, 428.39
+                .float 448.56, 451.5
+                .float 450.73, 476.4
 ## DATA DEFINE END
