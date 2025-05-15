@@ -25,6 +25,67 @@ main:
     jal ra, kalman_loop
 
 
+# Inputs: a0 = filename address, a1 = buffer address, a2 = length
+# Return: Result of the 'close' call (0 on success, -1 on error)
+# Clobbers: t0-t6, a0-a7 (standard caller-saved)
+# Uses: s0 (for file descriptor), s1 (for buffer address), s2 (for length)
+# Saves: ra, s0, s1, s2 on stack
+write_to_file:
+    addi sp, sp, -16     # Allocate stack space
+    sw ra, 0(sp)         # Save return address
+    sw s0, 4(sp)         # Save s0 (will store file descriptor)
+    sw s1, 8(sp)         # Save s1 (will save original buffer address)
+    sw s2, 12(sp)        # Save s2 (will save original length)
+
+    # --- Save original inputs a1 (buffer address) and a2 (length) ---
+    mv s1, a1            # Save original buffer address in s1
+    mv s2, a2            # Save original length in s2
+
+    # --- Open the file ---
+    # Arguments for open:
+    # a0 = filename address (input arg 1 - already correct)
+    # a1 = flags (O_WRONLY | O_CREAT | O_TRUNC = 0x601)
+    # a2 = mode (0666 = 0x1b6)
+
+    # a0 is already the filename address
+    li a1, 0x601         # Load flags directly into a1
+    li a2, 0x1b6         # Load mode (0666) directly into a2
+
+    call open            # Call the open function
+
+    # File descriptor is now in a0. Save it.
+    mv s0, a0            # Save the file descriptor in s0
+
+    # --- Write to the file ---
+    # Arguments for write:
+    # a0 = file descriptor (from s0)
+    # a1 = buffer address (from s1)
+    # a2 = count (from s2)
+
+    mv a0, s0            # Move the file descriptor from s0 to a0
+    mv a1, s1            # Restore buffer address from s1 to a1
+    mv a2, s2            # Restore length from s2 to a2
+
+    call write           # Call the write function
+
+    # --- Close the file ---
+    # Arguments for close:
+    # a0 = file descriptor (from s0)
+    mv a0, s0            # Move the file descriptor from s0 to a0
+
+    call close           # Call the close function
+
+    # --- Function Epilogue ---
+    # Restore saved registers
+    lw ra, 0(sp)         # Restore return address
+    lw s0, 4(sp)         # Restore s0
+    lw s1, 8(sp)         # Restore s1
+    lw s2, 12(sp)        # Restore s2
+    addi sp, sp, 16      # Deallocate stack space
+
+    ret                  # Return from the function (a0 contains close result)
+
+
 #-------------------------------------------------------------------------
 # Function: initialize_Q
 # Initializes the process noise covariance matrix Q
@@ -1126,6 +1187,14 @@ kalman_loop:
     lw ra, 4(sp)
     lw s0, 0(sp)
     addi sp, sp, 8
+
+
+    # Create file
+    la a0, filename
+    la a1, x
+    li a2, 24  # 24 because 6 floats, each of size 4 byes
+    call write_to_file
+
     j _finish
 ## END YOU CODE HERE
 
@@ -1147,6 +1216,8 @@ _finish:
 ## ALL DATA IS DEFINED HERE LIKE MATRIX, CONSTANTS ETC
 
 epsilon_val: .float 1.0e-7
+
+filename: .string "output.hex"
 
 # Constants
 .align 3

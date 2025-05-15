@@ -7,7 +7,7 @@ TEMPPATH = ./veer/tempFiles
 allV: compileV executeV
 
 cleanV: 
-	rm -f $(TEMPPATH)/logV.txt  $(TEMPPATH)/programV.hex  $(TEMPPATH)/TESTV.dis  $(TEMPPATH)/TESTV.exe
+	rm -f $(TEMPPATH)/logV.txt  $(TEMPPATH)/programV.hex  $(TEMPPATH)/TESTV.dis  $(TEMPPATH)/TESTV.exe $/output.hex
 	
 compileV:
 	$(GCC_PREFIX)-gcc $(ABI) -lgcc -T$(LINK) -o  $(TEMPPATH)/TESTV.exe $(CODEFOLDER)/Vectorized.s -nostartfiles -lm
@@ -15,8 +15,8 @@ compileV:
 	$(GCC_PREFIX)-objdump -S  $(TEMPPATH)/TESTV.exe >  $(TEMPPATH)/TESTV.dis
 	
 executeV:
-	-whisper -x $(TEMPPATH)/programV.hex -s 0x80000000 --tohost 0xd0580000 -f  $(TEMPPATH)/logV.txt --configfile ./veer/whisper.json
-	python3 python/print_log_array.py -1 V
+	-whisper -x $(TEMPPATH)/programV.hex -s 0x80000000 --tohost 0xd0580000 -f $(TEMPPATH)/logV.txt --configfile ./veer/whisper.json --newlib
+	python3 python/Hex-viewer.py -1 V
 
 
 allNV: compileNV executeNV
