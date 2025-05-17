@@ -13,6 +13,7 @@ main:
     addi sp, sp, -8
     sw ra, 4(sp)
     sw s0, 0(sp)
+    csrw frm, zero           # round-to-nearest-ties-even
     
     # Initialize the process noise covariance matrix Q
     jal ra, initialize_Q
@@ -189,8 +190,10 @@ i_loop:
     
 j_loop:
     # Check if j < i
-    bge t1, t0, j_loop_end
-    
+    bge t1, t0, j_loop_end   # skip upper triangle & diagonal
+    li  t2, 6                # hard upper bound
+    bge t1, t2, j_loop_end   # j >= 6  → done
+
     # Calculate address for matrix[i][j]
     li t2, 6       # Matrix width
     mul t3, t0, t2 # i * width
@@ -239,17 +242,20 @@ j_loop_end:
 # a2: Address of result matrix C
 #-------------------------------------------------------------------------
 multiply_6x6_6x6:
-    addi sp, sp, -16
-    sw ra, 12(sp)
-    sw s0, 8(sp)
-    sw s1, 4(sp)
-    sw s2, 0(sp)
+    addi sp, sp, -28       
+    sw ra, 24(sp)
+    sw s0, 20(sp)
+    sw s1, 16(sp)
+    sw s2, 12(sp)
+    sw s5, 8(sp)            # new – callee-saved temps used inside
+    sw s6, 4(sp)
+    sw s7, 0(sp)
+
     
     mv s0, a0      # Address of A
     mv s1, a1      # Address of B
     mv s2, a2      # Address of C
     
-    # Using RISC-V vector instructions for matrix multiplication
     # For each element C[i][j]
     li t0, 0       # i = 0
     
@@ -305,11 +311,14 @@ k_loop_mul:
     addi s5, zero, 6
     blt t0, s5, i_loop_mul
     
-    lw ra, 12(sp)
-    lw s0, 8(sp)
-    lw s1, 4(sp)
-    lw s2, 0(sp)
-    addi sp, sp, 16
+    lw s7, 0(sp)
+    lw s6, 4(sp)
+    lw s5, 8(sp)
+    lw s2, 12(sp)
+    lw s1, 16(sp)
+    lw s0, 20(sp)
+    lw ra, 24(sp)
+    addi sp, sp, 28
     ret
 
 #-------------------------------------------------------------------------
@@ -320,12 +329,15 @@ k_loop_mul:
 # a2: Address of result matrix C (6x2)
 #-------------------------------------------------------------------------
 multiply_6x6_6x2:
-    addi sp, sp, -16
-    sw ra, 12(sp)
-    sw s0, 8(sp)
-    sw s1, 4(sp)
-    sw s2, 0(sp)
-    
+    addi sp, sp, -28       
+    sw ra, 24(sp)
+    sw s0, 20(sp)
+    sw s1, 16(sp)
+    sw s2, 12(sp)
+    sw s5, 8(sp)          
+    sw s6, 4(sp)
+    sw s7, 0(sp)
+
     mv s0, a0      # Address of A
     mv s1, a1      # Address of B
     mv s2, a2      # Address of C
@@ -386,11 +398,14 @@ k_loop_mul_6x6_6x2:
     addi s6, zero, 6
     blt t0, s6, i_loop_mul_6x6_6x2
     
-    lw ra, 12(sp)
-    lw s0, 8(sp)
-    lw s1, 4(sp)
-    lw s2, 0(sp)
-    addi sp, sp, 16
+    lw s7, 0(sp)
+    lw s6, 4(sp)
+    lw s5, 8(sp)
+    lw s2, 12(sp)
+    lw s1, 16(sp)
+    lw s0, 20(sp)
+    lw ra, 24(sp)
+    addi sp, sp, 28
     ret
 
 #-------------------------------------------------------------------------
@@ -528,8 +543,8 @@ invert_2x2:
     
     # Handle singularity: if(fsbs(det) < 1e-7)
     fabs.s fs7, fs6        # fs6 is the determinant
-    la s8, epsilon_val
-    flw fs5, 0(s8)         # fs5 = 1.0e-7 (single-precision)
+    la t4, epsilon_val     
+    flw fs5, 0(t4)
     flt.s a0, fs7, fs5     # if |det| < 1e-7
     beqz a0, invert_2x2_proceed
     
@@ -700,11 +715,15 @@ j_loop_add:
 # a2: Address of result matrix C (6x6)
 #-------------------------------------------------------------------------
 multiply_6x2_2x6:
-    addi sp, sp, -16
-    sw ra, 12(sp)
-    sw s0, 8(sp)
-    sw s1, 4(sp)
-    sw s2, 0(sp)
+    addi sp, sp, -28        
+    sw ra, 24(sp)
+    sw s0, 20(sp)
+    sw s1, 16(sp)
+    sw s2, 12(sp)
+    sw s5, 8(sp)           
+    sw s6, 4(sp)
+    sw s7, 0(sp)
+
     
     mv s0, a0      # Address of A
     mv s1, a1      # Address of B
@@ -767,11 +786,14 @@ k_loop_mul_6x2_2x6:
     addi s7, zero, 6
     blt t0, s7, i_loop_mul_6x2_2x6
     
-    lw ra, 12(sp)
-    lw s0, 8(sp)
-    lw s1, 4(sp)
-    lw s2, 0(sp)
-    addi sp, sp, 16
+    lw s7, 0(sp)
+    lw s6, 4(sp)
+    lw s5, 8(sp)
+    lw s2, 12(sp)
+    lw s1, 16(sp)
+    lw s0, 20(sp)
+    lw ra, 24(sp)
+    addi sp, sp, 28
     ret
 
 #-------------------------------------------------------------------------
@@ -964,7 +986,7 @@ x_pred_inner_loop:
     flw fs0, 0(t0)      # R[0][0]
     addi t4, zero, 0            # j = 0
 S_00_loop:
-    slli t5, t4, 2      # j * 4
+    slli t5, t4, 3      # j * 8
     add t5, t2, t5      # PHT + j*4 = &PHT[j][0]
     flw fs1, 0(t5)      # PHT[j][0]
     slli t6, t4, 2      # j * 4
@@ -980,7 +1002,7 @@ S_00_loop:
     flw fs0, 4(t0)      # R[0][1]
     addi t4, zero, 0            # j = 0
 S_01_loop:
-    slli t5, t4, 2      # j * 4
+    slli t5, t4, 3      # j * 8
     add t5, t2, t5      # PHT + j*4
     flw fs1, 4(t5)      # PHT[j][1]
     slli t6, t4, 2      # j * 4
@@ -996,7 +1018,7 @@ S_01_loop:
     flw fs0, 8(t0)     # R[1][0]
     addi t4, zero, 0            # j = 0
 S_10_loop:
-    slli t5, t4, 2      # j * 4
+    slli t5, t4, 3      # j * 8
     add t5, t2, t5      # PHT + j*4
     flw fs1, 0(t5)      # PHT[j][0]
     slli t6, t4, 2      # j * 4
@@ -1012,7 +1034,7 @@ S_10_loop:
     flw fs0, 12(t0)     # R[1][1]
     addi t4, zero, 0            # j = 0
 S_11_loop:
-    slli t5, t4, 2      # j * 4
+    slli t5, t4, 3      # j * 8
     add t5, t2, t5      # PHT + j*4
     flw fs1, 4(t5)      # PHT[j][1]
     slli t6, t4, 2      # j * 4
