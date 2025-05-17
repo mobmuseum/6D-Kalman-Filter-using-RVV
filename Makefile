@@ -22,7 +22,7 @@ executeV:
 allNV: compileNV executeNV
 
 cleanNV: 
-	rm -f $(TEMPPATH)/logNV.txt  $(TEMPPATH)/programNV.hex  $(TEMPPATH)/TESTNV.dis  $(TEMPPATH)/TESTNV.exe
+	rm -f $(TEMPPATH)/logNV.txt  $(TEMPPATH)/programNV.hex  $(TEMPPATH)/TESTNV.dis  $(TEMPPATH)/TESTNV.exe $/output.hex
 	
 compileNV:
 	$(GCC_PREFIX)-gcc $(ABI) -lgcc -T$(LINK) -o  $(TEMPPATH)/TESTNV.exe $(CODEFOLDER)/NonVectorized.s -nostartfiles -lm
@@ -30,8 +30,8 @@ compileNV:
 	$(GCC_PREFIX)-objdump -S  $(TEMPPATH)/TESTNV.exe >  $(TEMPPATH)/TESTNV.dis
 	
 executeNV:
-	-whisper -x  $(TEMPPATH)/programNV.hex -s 0x80000000 --tohost 0xd0580000 -f  $(TEMPPATH)/logNV.txt --configfile ./veer/whisper.json
-	python3 python/print_log_array.py -1 NV
+	-whisper -x  $(TEMPPATH)/programNV.hex -s 0x80000000 --tohost 0xd0580000 -f  $(TEMPPATH)/logNV.txt --configfile ./veer/whisper.json --newlib
+	python3 python/Hex-viewer.py -1 NV
 
 testNV:
 	python3 python/write_array.py $(filter-out $@,$(MAKECMDGOALS)) NV
