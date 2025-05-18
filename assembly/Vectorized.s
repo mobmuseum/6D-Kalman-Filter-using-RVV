@@ -3,8 +3,6 @@
 .section .text
 .global _start
 _start:
-## START YOUR CODE HERE
-
 #-------------------------------------------------------------------------
 # Main function: Initializes the system and runs the Kalman filter
 #-------------------------------------------------------------------------
@@ -13,7 +11,7 @@ main:
     addi sp, sp, -8
     sw ra, 4(sp)
     sw s0, 0(sp)
-    csrw frm, zero           # round-to-nearest-ties-even
+    csrw frm, zero          
     
     # Initialize the process noise covariance matrix Q
     jal ra, initialize_Q
@@ -235,177 +233,309 @@ j_loop_end:
     ret
 
 #-------------------------------------------------------------------------
-# Function: multiply_6x6_6x6
-# Matrix multiplication C = A * B for 6x6 matrices
-# a0: Address of matrix A
-# a1: Address of matrix B
-# a2: Address of result matrix C
-#-------------------------------------------------------------------------
-multiply_6x6_6x6:
-    addi sp, sp, -28       
-    sw ra, 24(sp)
-    sw s0, 20(sp)
-    sw s1, 16(sp)
-    sw s2, 12(sp)
-    sw s5, 8(sp)            # new – callee-saved temps used inside
-    sw s6, 4(sp)
-    sw s7, 0(sp)
-
-    
-    mv s0, a0      # Address of A
-    mv s1, a1      # Address of B
-    mv s2, a2      # Address of C
-    
-    # For each element C[i][j]
-    li t0, 0       # i = 0
-    
-i_loop_mul:
-    li t1, 0       # j = 0
-    
-j_loop_mul:
-    # Initialize sum to 0
-    fcvt.s.w fs0, zero
-    
-    # Calculate base address for C[i][j]
-    li t2, 6       # Matrix width
-    mul t3, t0, t2 # i * width
-    add t3, t3, t1 # i * width + j
-    slli t3, t3, 2 # (i * width + j) * 4
-    add t3, s2, t3 # C + (i * width + j) * 4
-    
-    # For each k, sum += A[i][k] * B[k][j]
-    li t4, 0       # k = 0
-    
-k_loop_mul:
-    # Calculate address for A[i][k]
-    mul t5, t0, t2 # i * width
-    add t5, t5, t4 # i * width + k
-    slli t5, t5, 2 # (i * width + k) * 4
-    add t5, s0, t5 # A + (i * width + k) * 4
-    
-    # Calculate address for B[k][j]
-    mul t6, t4, t2 # k * width
-    add t6, t6, t1 # k * width + j
-    slli t6, t6, 2 # (k * width + j) * 4
-    add t6, s1, t6 # B + (k * width + j) * 4
-    
-    # Load values
-    flw fs1, 0(t5) # A[i][k]
-    flw fs2, 0(t6) # B[k][j]
-    
-    # Multiply and accumulate
-    fmadd.s fs0, fs1, fs2, fs0
-    
-    addi t4, t4, 1 # k++
-    addi s5, zero, 6
-    blt t4, s5, k_loop_mul
-    
-    # Store result to C[i][j]
-    fsw fs0, 0(t3)
-    
-    addi t1, t1, 1 # j++
-    addi s5, zero, 6
-    blt t1, s5, j_loop_mul
-    
-    addi t0, t0, 1 # i++
-    addi s5, zero, 6
-    blt t0, s5, i_loop_mul
-    
-    lw s7, 0(sp)
-    lw s6, 4(sp)
-    lw s5, 8(sp)
-    lw s2, 12(sp)
-    lw s1, 16(sp)
-    lw s0, 20(sp)
-    lw ra, 24(sp)
-    addi sp, sp, 28
-    ret
-
-#-------------------------------------------------------------------------
 # Function: multiply_6x6_6x2
-# Matrix multiplication C = A * B where A is 6x6 and B is 6x2
+# Matrix multiplication C = A * B
+# A is 6x6, B is 6x2, C is 6x2
+# Computes one row of C at a time using vector instructions.
 # a0: Address of matrix A (6x6)
 # a1: Address of matrix B (6x2)
 # a2: Address of result matrix C (6x2)
+# Assumptions: Matrices are stored in row-major order. Elements are single-precision floats (4 bytes).
 #-------------------------------------------------------------------------
 multiply_6x6_6x2:
-    addi sp, sp, -28       
-    sw ra, 24(sp)
-    sw s0, 20(sp)
-    sw s1, 16(sp)
-    sw s2, 12(sp)
-    sw s5, 8(sp)          
-    sw s6, 4(sp)
-    sw s7, 0(sp)
+    addi sp, sp, -40      # Adjust stack pointer for saved registers
+    sw ra, 36(sp)         # Save return address
+    sw s0, 32(sp)         # Base address of A
+    sw s1, 28(sp)         # Base address of B
+    sw s2, 24(sp)         # Base address of C
+    sw s3, 20(sp)         # Outer loop limit M (6 for A rows, C rows)
+    sw s4, 16(sp)         # Inner loop limit K (6 for A cols / B rows)
+    sw s5, 12(sp)         # Columns of B / C (N = 2)
+    sw s6, 8(sp)          # Row stride for A and B in bytes (A: 6c*4B=24, B: 2c*4B=8)
+                          # s6 will be specifically for A_row_stride (24)
+    sw s7, 4(sp)          # Row stride for C in bytes (2c * 4B = 8)
+                          # s7 will be specifically for B_row_stride (8)
+    sw s8, 0(sp)          # Pointer to current row of C (&C[i][0])
 
-    mv s0, a0      # Address of A
-    mv s1, a1      # Address of B
-    mv s2, a2      # Address of C
+    mv s0, a0             # s0 = Address of A
+    mv s1, a1             # s1 = Address of B
+    mv s2, a2             # s2 = Address of C
+
+    li s3, 6              # M = 6 (rows of A, rows of C)
+    li s4, 6              # K = 6 (cols of A, rows of B) - Inner loop limit
+    li s5, 2              # N = 2 (cols of B, cols of C) - Vector Length for loads/stores of B and C rows
+
+    li s6, 24             # Row stride for A = K_A * sizeof(float) = 6 * 4 = 24 bytes
+    li t4, 8              # Temp register for B_row_stride = N_B * sizeof(float) = 2 * 4 = 8 bytes
+    sw t4, 4(sp)          # Store B_row_stride to s7's slot
+    li s7, 8              # Row stride for C = N_C * sizeof(float) = 2 * 4 = 8 bytes (re-using s7 for C_row_stride now)
+                          # We'll load B_row_stride from stack when needed or use t4 if available.
+
+    # Set vector configuration for rows of B and C:
+    # VL = N (2), SEW = 32 bits (e32), LMUL = 1 (m1)
+    vsetvli t0, s5, e32, m1, ta, ma # t0 will hold actual VL (should be 2)
+
+    # Outer loop: Iterate through rows of A and C (i from 0 to M-1)
+    li t1, 0              # t1 = row counter 'i'
+i_loop_6x6_6x2:
+    # Calculate &C[i][0] and store in s8
+    mul t2, t1, s7        # t2 = i * row_stride_C (8 bytes)
+    add s8, s2, t2        # s8 = &C[i][0]
+
+    # Calculate &A[i][0]
+    mul t2, t1, s6        # t2 = i * row_stride_A (24 bytes)
+    add t6, s0, t2        # t6 = &A[i][0] (pointer to current row of A)
+
+    # Initialize vector accumulator v_acc (e.g., v24) to zeros for C[i][*]
+    # This will hold the 2 elements of a row of C.
+    vmv.v.i v24, 0        # v24 = {0.0, 0.0}
+
+    # Inner loop: Iterate for k (summation dimension from 0 to K-1)
+    li t3, 0              # t3 = 'k' counter (cols of A / rows of B)
+k_loop_6x6_6x2:
+    # Load A[i][k] (scalar)
+    slli t2, t3, 2        # t2 = k * sizeof(float) = k * 4
+    add t2, t6, t2        # t2 = &A[i][k]
+    flw fs0, 0(t2)        # fs0 = A[i][k]
+
+    # Broadcast A[i][k] (fs0) to a vector register (e.g., v0)
+    # VL is already set to 2.
+    vfmv.v.f v0, fs0      # v0 = {A[i][k], A[i][k]}
+
+    # Calculate &B[k][0]
+    lw t5, 4(sp)          # Load B_row_stride (8 bytes) into t5
+    mul t2, t3, t5        # t2 = k * row_stride_B (8 bytes)
+    add t2, s1, t2        # t2 = &B[k][0]
+
+    # Load B[k][*] (vector B[k][0...N-1]) into vector register (e.g., v1)
+    # VL is 2, SEW=32.
+    vle32.v v1, (t2)      # v1 = {B[k][0], B[k][1]}
+
+    # Vector multiply-accumulate: v24 = v24 + (v0 * v1)
+    vfmacc.vv v24, v0, v1
+
+    addi t3, t3, 1        # k++
+    blt t3, s4, k_loop_6x6_6x2 # Loop if k < K (6)
+
+    # Store the resulting row vector C[i][*] from v24 to memory at &C[i][0] (s8)
+    # VL is 2, SEW=32.
+    vse32.v v24, (s8)
+
+    addi t1, t1, 1        # i++
+    blt t1, s3, i_loop_6x6_6x2 # Loop if i < M (6)
+
+    # Epilogue
+    lw s8, 0(sp)
+    lw s7, 4(sp)          # This will be B_row_stride that was saved
+    lw s6, 8(sp)
+    lw s5, 12(sp)
+    lw s4, 16(sp)
+    lw s3, 20(sp)
+    lw s2, 24(sp)
+    lw s1, 28(sp)
+    lw s0, 32(sp)
+    lw ra, 36(sp)
+    addi sp, sp, 40       # Restore stack pointer
+    ret
+
+# Matrix A: 6x2, Matrix B: 2x6, Matrix C: 6x6 
+#-------------------------------------------------------------------------
+# Function: multiply_6x2_2x6
+# Matrix multiplication C = A * B
+# A is 6x2, B is 2x6, C is 6x6
+# Computes one row of C at a time using vector instructions.
+# a0: Address of matrix A (6x2)
+# a1: Address of matrix B (2x6)
+# a2: Address of result matrix C (6x6)
+# Assumptions: Matrices are stored in row-major order. Elements are single-precision floats (4 bytes).
+#-------------------------------------------------------------------------
+multiply_6x2_2x6:
+    addi sp, sp, -40      # Adjust stack pointer for saved registers
+    sw ra, 36(sp)         # Save return address
+    sw s0, 32(sp)         # Base address of A
+    sw s1, 28(sp)         # Base address of B
+    sw s2, 24(sp)         # Base address of C
+    sw s3, 20(sp)         # Outer loop limit M (6 for A rows, C rows)
+    sw s4, 16(sp)         # Inner loop limit K (2 for A cols / B rows)
+    sw s5, 12(sp)         # Columns of B / C (N = 6)
+    sw s6, 8(sp)          # Row stride for A in bytes (2 cols * 4 bytes/col = 8)
+    sw s7, 4(sp)          # Row stride for B and C in bytes (6 cols * 4 bytes/col = 24)
+    sw s8, 0(sp)          # Pointer to current row of C (&C[i][0])
+
+    mv s0, a0             # s0 = Address of A
+    mv s1, a1             # s1 = Address of B
+    mv s2, a2             # s2 = Address of C
+
+    li s3, 6              # M = 6 (rows of A, rows of C)
+    li s4, 2              # K = 2 (cols of A, rows of B) - Inner loop limit
+    li s5, 6              # N = 6 (cols of B, cols of C) - Vector Length for loads/stores of B and C rows
+
+    li s6, 8              # Row stride for A = K * sizeof(float) = 2 * 4 = 8 bytes
+    li s7, 24             # Row stride for B and C = N * sizeof(float) = 6 * 4 = 24 bytes
+
+    # Set vector configuration for rows of B and C:
+    # VL = N (6), SEW = 32 bits (e32), LMUL = 1 (m1)
+    # vsetvli rd, avl, sew, lmul, ta, ma
+    vsetvli t0, s5, e32, m1, ta, ma # t0 will hold actual VL (should be 6)
+
+    # Outer loop: Iterate through rows of A and C (i from 0 to M-1)
+    li t1, 0              # t1 = row counter 'i'
+i_loop_6x2_2x6:
+    # Calculate &C[i][0] and store in s8
+    mul t2, t1, s7        # t2 = i * row_stride_C (24 bytes)
+    add s8, s2, t2        # s8 = &C[i][0]
+
+    # Calculate &A[i][0]
+    mul t2, t1, s6        # t2 = i * row_stride_A (8 bytes)
+    add t6, s0, t2        # t6 = &A[i][0] (pointer to current row of A)
+
+    # Initialize vector accumulator v_acc (e.g., v24) to zeros for C[i][*]
+    # This will hold the 6 elements of a row of C.
+    vmv.v.i v24, 0        # v24 = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
+
+    # Inner loop: Iterate for k (summation dimension from 0 to K-1)
+    li t3, 0              # t3 = 'k' counter (cols of A / rows of B)
+k_loop_6x2_2x6:
+    # Load A[i][k] (scalar)
+    slli t4, t3, 2        # t4 = k * sizeof(float) = k * 4
+    add t4, t6, t4        # t4 = &A[i][k]
+    flw fs0, 0(t4)        # fs0 = A[i][k]
+
+    # Broadcast A[i][k] (fs0) to a vector register (e.g., v0)
+    # VL is already set to 6.
+    vfmv.v.f v0, fs0      # v0 = {A[i][k], A[i][k], ..., A[i][k]} (6 times)
+
+    # Calculate &B[k][0]
+    mul t5, t3, s7        # t5 = k * row_stride_B (24 bytes)
+    add t5, s1, t5        # t5 = &B[k][0]
+
+    # Load B[k][*] (vector B[k][0...N-1]) into vector register (e.g., v1)
+    # VL is 6, SEW=32.
+    vle32.v v1, (t5)      # v1 = {B[k][0], B[k][1], ..., B[k][5]}
+
+    # Vector multiply-accumulate: v24 = v24 + (v0 * v1)
+    # vfmacc.vv vd, vs1, vs2  (vd = vd + vs1*vs2)
+    # vs1 is v0 (A_broadcast), vs2 is v1 (B_row)
+    vfmacc.vv v24, v0, v1
+
+    addi t3, t3, 1        # k++
+    blt t3, s4, k_loop_6x2_2x6 # Loop if k < K (2)
+
+    # Store the resulting row vector C[i][*] from v24 to memory at &C[i][0] (s8)
+    # VL is 6, SEW=32.
+    vse32.v v24, (s8)
+
+    addi t1, t1, 1        # i++
+    blt t1, s3, i_loop_6x2_2x6 # Loop if i < M (6)
+
+    # Epilogue
+    lw s8, 0(sp)
+    lw s7, 4(sp)
+    lw s6, 8(sp)
+    lw s5, 12(sp)
+    lw s4, 16(sp)
+    lw s3, 20(sp)
+    lw s2, 24(sp)
+    lw s1, 28(sp)
+    lw s0, 32(sp)
+    lw ra, 36(sp)
+    addi sp, sp, 40       # Restore stack pointer
+    ret
+
+# Fully optimized version for multiply_6x6_6x6 using vector instructions
+#-------------------------------------------------------------------------
+# Function: multiply_6x6_6x6
+# Matrix multiplication C = A * B for 6x6 matrices using vector instructions.
+# Computes one row of C at a time.
+# a0: Address of matrix A (6x6)
+# a1: Address of matrix B (6x6)
+# a2: Address of result matrix C (6x6)
+#-------------------------------------------------------------------------
+multiply_6x6_6x6:
+    addi sp, sp, -32
+    sw ra, 28(sp)
+    sw s0, 24(sp)         # Base address of A
+    sw s1, 20(sp)         # Base address of B
+    sw s2, 16(sp)         # Base address of C
+    sw s3, 12(sp)         # Loop limit N (6)
+    sw s4, 8(sp)          # Row stride in bytes (24)
+    sw s5, 4(sp)          # Pointer to current row of A (&A[i][0])
+    sw s6, 0(sp)          # Pointer to current row of C (&C[i][0])
+
+    mv s0, a0                # s0 = Address of A
+    mv s1, a1                # s1 = Address of B
+    mv s2, a2                # s2 = Address of C
     
-    # For each element C[i][j]
-    addi t0, zero, 0       # i = 0
-    
-i_loop_mul_6x6_6x2:
-    addi t1, zero, 0       # j = 0
-    
-j_loop_mul_6x6_6x2:
-    # Initialize sum to 0
-    fcvt.s.w fs0, zero
-    
-    # Calculate base address for C[i][j]
-    addi t2, zero, 2       # B matrix width
-    mul t3, t0, t2 # i * width
-    add t3, t3, t1 # i * width + j
-    slli t3, t3, 2 # (i * width + j) * 4
-    add t3, s2, t3 # C + (i * width + j) * 4
-    
-    # For each k, sum += A[i][k] * B[k][j]
-    addi t4, zero, 0       # k = 0
-    
-k_loop_mul_6x6_6x2:
-    # Calculate address for A[i][k]
-    addi t5, zero, 6       # A matrix width
-    mul t6, t0, t5 # i * A_width
-    add t6, t6, t4 # i * A_width + k
-    slli t6, t6, 2 # (i * A_width + k) * 4
-    add t6, s0, t6 # A + (i * A_width + k) * 4
-    
-    # Calculate address for B[k][j]
-    mul s5, t4, t2 # k * B_width
-    add s5, s5, t1 # k * B_width + j
-    slli s5, s5, 2 # (k * B_width + j) * 4
-    add s5, s1, s5 # B + (k * B_width + j) * 4
-    
-    # Load values
-    flw fs1, 0(t6) # A[i][k]
-    flw fs2, 0(s5) # B[k][j]
-    
-    # Multiply and accumulate
-    fmadd.s fs0, fs1, fs2, fs0
-    
-    addi t4, t4, 1 # k++
-    addi s6, zero, 6
-    blt t4, s6, k_loop_mul_6x6_6x2
-    
-    # Store result to C[i][j]
-    fsw fs0, 0(t3)
-    
-    addi t1, t1, 1 # j++
-    addi s6, zero, 2
-    blt t1, s6, j_loop_mul_6x6_6x2
-    
-    addi t0, t0, 1 # i++
-    addi s6, zero, 6
-    blt t0, s6, i_loop_mul_6x6_6x2
-    
-    lw s7, 0(sp)
-    lw s6, 4(sp)
-    lw s5, 8(sp)
-    lw s2, 12(sp)
-    lw s1, 16(sp)
-    lw s0, 20(sp)
-    lw ra, 24(sp)
-    addi sp, sp, 28
+    li s3, 6                 # Matrix dimension N = 6
+    li s4, 24                # Row stride = N * sizeof(float) = 6 * 4 = 24 bytes
+
+    # Set vector configuration:
+    # VL = 6 (as s3 is 6), SEW = 32 bits (e32), LMUL = 1 (m1)
+    # Tail agnostic (ta), Mask agnostic (ma) - typical defaults
+    # rd for vsetvli is t0, which will hold the actual VL.
+    # rs1 is the requested vector length (AVL), here we want to process N elements.
+    vsetvli t0, s3, e32, m1, ta, ma
+
+    # Outer loop: Iterate through rows of A and C (i)
+    li t1, 0                 # t1 will be our row counter 'i'
+i_loop_vec:
+    # Calculate &C[i][0] and store in s6
+    mul t2, t1, s4           # t2 = i * row_stride
+    add s6, s2, t2           # s6 = &C[i][0]
+
+    # Calculate &A[i][0] and store in s5
+    #mul t2, t1, s4          # t2 = i * row_stride (already calculated for C, can reuse if t1 is 'i')
+    add s5, s0, t2           # s5 = &A[i][0]
+
+    # Initialize vector accumulator v_acc (e.g., v24) to zeros for C[i][*]
+    # The vsetvli above already set VL for 6 elements, SEW=32.
+    # vmv.v.i instruction splats an immediate into a vector register.
+    vmv.v.i v24, 0           # v24 = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}
+
+    # Inner loop: Iterate for k (summation dimension from 0 to N-1)
+    li t3, 0                 # t3 will be our 'k' counter
+k_loop_vec:
+    # Load A[i][k] (scalar)
+    slli t4, t3, 2           # t4 = k * sizeof(float) = k * 4
+    add t4, s5, t4           # t4 = &A[i][k]
+    flw fs0, 0(t4)           # fs0 = A[i][k]
+
+    # Broadcast A[i][k] (fs0) to a vector register (e.g., v0)
+    vfmv.v.f v0, fs0         # v0 = {A[i][k], A[i][k], ..., A[i][k]}
+
+    # Calculate &B[k][0]
+    mul t5, t3, s4           # t5 = k * row_stride
+    add t5, s1, t5           # t5 = &B[k][0]
+
+    # Load B[k][*] (vector B[k][0...5]) into vector register (e.g., v1)
+    # vle32.v loads SEW=32 bit elements. Our VL is 6.
+    vle32.v v1, (t5)         # v1 = {B[k][0], B[k][1], ..., B[k][5]}
+
+    # Vector multiply-accumulate: v24 = v24 + (v0 * v1)
+    # vfmacc.vv vd, vs1, vs2 means vd[i] = +(vs1[i] * vs2[i]) + vd[i]
+    # Here, vs1 is v0 (A_broadcast), vs2 is v1 (B_row)
+    vfmacc.vv v24, v0, v1
+
+    addi t3, t3, 1           # k++
+    blt t3, s3, k_loop_vec   # Loop if k < N
+
+    # Store the resulting row vector C[i][*] from v24 to memory at &C[i][0]
+    # vse32.v stores SEW=32 bit elements. Our VL is 6.
+    vse32.v v24, (s6)
+
+    addi t1, t1, 1           # i++
+    blt t1, s3, i_loop_vec   # Loop if i < N
+
+    # Epilogue
+    lw s6, 0(sp)
+    lw s5, 4(sp)
+    lw s4, 8(sp)
+    lw s3, 12(sp)
+    lw s2, 16(sp)
+    lw s1, 20(sp)
+    lw s0, 24(sp)
+    lw ra, 28(sp)
+    addi sp, sp, 32
     ret
 
 #-------------------------------------------------------------------------
@@ -705,95 +835,6 @@ j_loop_add:
     lw s1, 4(sp)
     lw s2, 0(sp)
     addi sp, sp, 16
-    ret
-
-#-------------------------------------------------------------------------
-# Function: multiply_6x2_2x6
-# Matrix multiplication C = A * B where A is 6x2 and B is 2x6
-# a0: Address of matrix A (6x2)
-# a1: Address of matrix B (2x6)
-# a2: Address of result matrix C (6x6)
-#-------------------------------------------------------------------------
-multiply_6x2_2x6:
-    addi sp, sp, -28        
-    sw ra, 24(sp)
-    sw s0, 20(sp)
-    sw s1, 16(sp)
-    sw s2, 12(sp)
-    sw s5, 8(sp)           
-    sw s6, 4(sp)
-    sw s7, 0(sp)
-
-    
-    mv s0, a0      # Address of A
-    mv s1, a1      # Address of B
-    mv s2, a2      # Address of C
-    
-    # For each element C[i][j]
-    addi t0, zero, 0       # i = 0
-    
-i_loop_mul_6x2_2x6:
-    addi t1, zero, 0       # j = 0
-    
-j_loop_mul_6x2_2x6:
-    # Initialize sum to 0
-    fcvt.s.w fs0, zero
-    
-    # Calculate base address for C[i][j]
-    addi t2, zero, 6       # C matrix width
-    mul t3, t0, t2 # i * C_width
-    add t3, t3, t1 # i * C_width + j
-    slli t3, t3, 2 # (i * C_width + j) * 4 (size of .float)
-    add t3, s2, t3 # C + (i * C_width + j) * 4
-    
-    # For each k, sum += A[i][k] * B[k][j]
-    addi t4, zero, 0       # k = 0
-    
-k_loop_mul_6x2_2x6:
-    # Calculate address for A[i][k]
-    addi t5, zero, 2       # A matrix width
-    mul t6, t0, t5 # i * A_width
-    add t6, t6, t4 # i * A_width + k
-    slli t6, t6, 2 # (i * A_width + k) * 4
-    add t6, s0, t6 # A + (i * A_width + k) * 4
-    
-    # Calculate address for B[k][j]
-    addi s5, zero, 6       # B matrix width
-    mul s6, t4, s5 # k * B_width
-    add s6, s6, t1 # k * B_width + j
-    slli s6, s6, 2 # (k * B_width + j) * 4
-    add s6, s1, s6 # B + (k * B_width + j) * 4
-    
-    # Load values
-    flw fs1, 0(t6) # A[i][k]
-    flw fs2, 0(s6) # B[k][j]
-    
-    # Multiply and accumulate
-    fmadd.s fs0, fs1, fs2, fs0
-    
-    addi t4, t4, 1 # k++
-    addi s7, zero, 2
-    blt t4, s7, k_loop_mul_6x2_2x6
-    
-    # Store result to C[i][j]
-    fsw fs0, 0(t3)
-    
-    addi t1, t1, 1 # j++
-    addi s7, zero, 6
-    blt t1, s7, j_loop_mul_6x2_2x6
-    
-    addi t0, t0, 1 # i++
-    addi s7, zero, 6
-    blt t0, s7, i_loop_mul_6x2_2x6
-    
-    lw s7, 0(sp)
-    lw s6, 4(sp)
-    lw s5, 8(sp)
-    lw s2, 12(sp)
-    lw s1, 16(sp)
-    lw s0, 20(sp)
-    lw ra, 24(sp)
-    addi sp, sp, 28
     ret
 
 #-------------------------------------------------------------------------
